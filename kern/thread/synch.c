@@ -153,11 +153,18 @@ lock_create(const char *name)
 		kfree(lock);
 		return NULL;
 	}
-
 	HANGMAN_LOCKABLEINIT(&lock->lk_hangman, lock->lk_name);
 
 	// add stuff here as needed
-
+	lock->locked = false;
+	lock->lock_chan = wchan_create(lock->lk_name);
+	if (lock->lock_chan == NULL) {
+		kfree(lock->lk_name);
+		kfree(lock);
+		return NULL;
+	}
+	spinlock_init(&lock->spin_lock);
+	lock->holding = NULL;
 	return lock;
 }
 
@@ -165,9 +172,11 @@ void
 lock_destroy(struct lock *lock)
 {
 	KASSERT(lock != NULL);
-
+	KASSERT(lock->locked == false);
+	
 	// add stuff here as needed
-
+	spinlock_cleanup(&lock->spin_lock);
+	wchan_destroy(lock->lock_chan);
 	kfree(lock->lk_name);
 	kfree(lock);
 }
@@ -175,36 +184,50 @@ lock_destroy(struct lock *lock)
 void
 lock_acquire(struct lock *lock)
 {
+	KASSERT(lock != NULL);
+	spinlock_acquire(&lock->spin_lock);
 	/* Call this (atomically) before waiting for a lock */
-	//HANGMAN_WAIT(&curthread->t_hangman, &lock->lk_hangman);
+	HANGMAN_WAIT(&curthread->t_hangman, &lock->lk_hangman);
 
 	// Write this
-
-	(void)lock;  // suppress warning until code gets written
+	while (lock->locked == true) {
+		wchan_sleep(lock->lock_chan, &lock->spin_lock);
+	}
+	lock->locked = true;
+	lock->holding = curthread;
+	//(void)lock;  // suppress warning until code gets written
 
 	/* Call this (atomically) once the lock is acquired */
-	//HANGMAN_ACQUIRE(&curthread->t_hangman, &lock->lk_hangman);
+	HANGMAN_ACQUIRE(&curthread->t_hangman, &lock->lk_hangman);
+	spinlock_release(&lock->spin_lock);
 }
 
 void
 lock_release(struct lock *lock)
 {
+	KASSERT(lock != NULL);
+	KASSERT(lock->holding == curthread && lock->locked);
+	spinlock_acquire(&lock->spin_lock);
+	lock->locked = false;
+	lock->holding = NULL;
 	/* Call this (atomically) when the lock is released */
-	//HANGMAN_RELEASE(&curthread->t_hangman, &lock->lk_hangman);
-
+	HANGMAN_RELEASE(&curthread->t_hangman, &lock->lk_hangman);
+	wchan_wakeone(lock->lock_chan, &lock->spin_lock);
+	spinlock_release(&lock->spin_lock);
 	// Write this
 
-	(void)lock;  // suppress warning until code gets written
+	//(void)lock;  // suppress warning until code gets written
 }
 
 bool
 lock_do_i_hold(struct lock *lock)
 {
+	KASSERT(lock != NULL);
 	// Write this
+	//kprint(lock->held_pid);
+	//(void)lock;  // suppress warning until code gets written
 
-	(void)lock;  // suppress warning until code gets written
-
-	return true; // dummy until code gets written
+	return lock->locked == true && lock->holding == curthread; // dummy until code gets written
 }
 
 ////////////////////////////////////////////////////////////
